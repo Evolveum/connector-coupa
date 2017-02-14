@@ -1,0 +1,123 @@
+package com.evolveum.polygon.rest.model;
+
+import java.util.List;
+
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlElementWrapper;
+import javax.xml.bind.annotation.XmlRootElement;
+
+@XmlRootElement(name="user")
+public class CoupaUser {
+	
+	private String id;
+	private String login;
+	private String active;
+	private String purchasingUser;//purchasing-user;
+	private String authenticationMethod;//authentication-method;
+	private String ssoIdentifier;//sso-identifier;
+	private String email;
+	private String firstname;
+	private String lastname;
+	private List<CoupaRole> roles;
+	private String defLocale;//default-locale;
+	private String defAddressLocationCode;//default-address_location-code;
+	
+	
+	public String getId() {
+		return id;
+	}
+	@XmlElement
+	public void setId(String id) {
+		this.id = id;
+	}
+	
+	public String getLogin() {
+		return login;
+	}
+	@XmlElement
+	public void setLogin(String login) {
+		this.login = login;
+	}
+	
+	public String getActive() {
+		return active;
+	}
+	@XmlElement
+	public void setActive(String active) {
+		this.active = active;
+	}
+	
+	public String getPurchasingUser() {
+		return purchasingUser;
+	}
+	@XmlElement(name="purchasing-user")
+	public void setPurchasingUser(String purchasingUser) {
+		this.purchasingUser = purchasingUser;
+	}
+	
+	public String getAuthenticationMethod() {
+		return authenticationMethod;
+	}
+	@XmlElement(name="authentication-method")
+	public void setAuthenticationMethod(String authenticationMethod) {
+		this.authenticationMethod = authenticationMethod;
+	}
+	
+	public String getSsoIdentifier() {
+		return ssoIdentifier;
+	}
+	@XmlElement(name="sso-identifier")
+	public void setSsoIdentifier(String ssoIdentifier) {
+		this.ssoIdentifier = ssoIdentifier;
+	}
+	
+	public String getEmail() {
+		return email;
+	}
+	@XmlElement
+	public void setEmail(String email) {
+		this.email = email;
+	}
+	
+	public String getFirstname() {
+		return firstname;
+	}
+	@XmlElement
+	public void setFirstname(String firstname) {
+		this.firstname = firstname;
+	}
+	
+	public String getLastname() {
+		return lastname;
+	}
+	@XmlElement
+	public void setLastname(String lastname) {
+		this.lastname = lastname;
+	}
+	
+	public List<CoupaRole> getRoles() {
+		return roles;
+	}
+	@XmlElementWrapper
+	@XmlElement(name = "role")  
+	public void setRoles(List<CoupaRole> roles) {
+		this.roles = roles;
+	}
+	
+	public String getDefLocale() {
+		return defLocale;
+	}
+	@XmlElement(name="default-locale")
+	public void setDefLocale(String defLocale) {
+		this.defLocale = defLocale;
+	}
+	
+	public String getDefAddressLocationCode() {
+		return defAddressLocationCode;
+	}
+	@XmlElement(name="default-address_location-code")
+	public void setDefAddressLocationCode(String defAddressLocationCode) {
+		this.defAddressLocationCode = defAddressLocationCode;
+	}
+	
+}
