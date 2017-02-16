@@ -2,23 +2,35 @@ package com.evolveum.polygon.rest;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.io.StringWriter;
+import java.io.UnsupportedEncodingException;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Set;
 
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
+import javax.xml.bind.Marshaller;
 import javax.xml.bind.Unmarshaller;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.entity.ByteArrayEntity;
+import org.apache.http.util.EntityUtils;
 import org.identityconnectors.common.StringUtil;
 import org.identityconnectors.common.logging.Log;
+import org.identityconnectors.framework.common.objects.Attribute;
 import org.identityconnectors.framework.common.objects.AttributeInfoBuilder;
 import org.identityconnectors.framework.common.objects.ConnectorObject;
 import org.identityconnectors.framework.common.objects.ConnectorObjectBuilder;
@@ -32,9 +44,11 @@ import org.identityconnectors.framework.common.objects.SchemaBuilder;
 import org.identityconnectors.framework.common.objects.Uid;
 import org.identityconnectors.framework.common.objects.filter.FilterTranslator;
 import org.identityconnectors.framework.spi.ConnectorClass;
+import org.identityconnectors.framework.spi.operations.CreateOp;
 import org.identityconnectors.framework.spi.operations.SchemaOp;
 import org.identityconnectors.framework.spi.operations.SearchOp;
 import org.identityconnectors.framework.spi.operations.TestOp;
+import org.identityconnectors.framework.spi.operations.UpdateOp;
 import org.xml.sax.InputSource;
 
 import com.evolveum.polygon.rest.model.CoupaUser;
@@ -42,15 +56,13 @@ import com.evolveum.polygon.rest.model.CoupaUserList;
 
 
 @ConnectorClass(displayNameKey = "connector.example.rest.display", configurationClass = CoupaRestConfiguration.class)
-public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter> {
+public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter>, UpdateOp, CreateOp {
 
 	private static final Log LOG = Log.getLog(CoupaRestConnector.class);
 	
 	public static final String APPLICATION_XML = "application/xml";
 	public static final String ACCEPT = "ACCEPT";
 	public static final String USER_SEARCH = "/users";
-	public static final String LOGIN_PARAM = "login";
-	public static final String ID_PARAM = "id";
 	public static final String LOGIN_TAG_NAME = "login";
 	
 	public static final String USER_OBJECT_CLASS = "userObjectClass";
@@ -68,27 +80,51 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	public static final String USER_ATTR_ROLES = "roles";
 	public static final String USER_ATTR_ID = "id";
 	public static final String USER_ATTR_LOGIN = "login";
-
 	
-	@Override
-	public void test() {
+	public static final int PAGE_SIZE_LIMIT = 50;
+	
+	public static final String LOGIN_PARAM = "login";
+	public static final String ID_PARAM = "id";
+	public static final String LIMIT_PARAM = "limit";
+	public static final String OFFSET_PARAM = "offset";
+	
+	private URIBuilder prepareUserUriBuilder(){
 		URIBuilder uriBuilder = getURIBuilder();
 		String basePath = uriBuilder.getPath();
 		uriBuilder.setPath(basePath + USER_SEARCH);
-		uriBuilder.addParameter(LOGIN_PARAM, getConfiguration().getTestUser());
+		return uriBuilder;
+	}
+	
+	private HttpUriRequest prepareRequest(URIBuilder uriBuilder, Class<? extends HttpUriRequest> requestClass){
 		URI uri;
 		try {
 			uri = uriBuilder.build();
 		} catch (URISyntaxException e) {
 			throw new IllegalArgumentException(e.getMessage(), e);
 		}
-		HttpGet request = new HttpGet(uri);
-		request.addHeader(ACCEPT, APPLICATION_XML);
-		request.addHeader(getConfiguration().getTokenName(), getConfiguration().getTokenValue());
+		HttpUriRequest request = null;
+		try {
+			request = requestClass.getConstructor(URI.class).newInstance(uri);
+			request.addHeader(ACCEPT, APPLICATION_XML);
+			request.addHeader(getConfiguration().getTokenName(), getConfiguration().getTokenValue());
+		} catch (InstantiationException | IllegalAccessException | IllegalArgumentException | InvocationTargetException
+				| NoSuchMethodException | SecurityException e) {
+			e.printStackTrace();
+			throw new RuntimeException(e);
+		}
+		return request;
+	}
+	
+	@Override
+	public void test() {
+		URIBuilder uriBuilder = prepareUserUriBuilder();
+		uriBuilder.addParameter(LOGIN_PARAM, getConfiguration().getTestUser());
+		HttpUriRequest request;
+		request = prepareRequest(uriBuilder, HttpGet.class);
 		
 		HttpResponse response = execute(request);
 		
-		//TODO zkontrolovat ze je obsazen user v odpovedi a je 200 OK. jinak vyhodit vyjimku nebo neco aby byl vysledek testu fail
+		//TODO zkontrolovat ze je v odpovedi a je 200 OK. jinak vyhodit vyjimku nebo neco aby byl vysledek testu fail
 		processResponseErrors((CloseableHttpResponse)response);
 		try {
 			checkResponseContent(response);
@@ -129,8 +165,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	private ObjectClassInfoBuilder prepareAccountClass(){
 		ObjectClassInfoBuilder accountClassBuilder = new ObjectClassInfoBuilder();
 		accountClassBuilder.setType(USER_OBJECT_CLASS);
-		accountClassBuilder.addAttributeInfo(prepareUidAttributeBuilder("id", String.class).build());
-		accountClassBuilder.addAttributeInfo(prepareNameAttributeBuilder("login", String.class).build());
+		//accountClassBuilder.addAttributeInfo(prepareUidAttributeBuilder("id", String.class).build());
+		//accountClassBuilder.addAttributeInfo(prepareNameAttributeBuilder("login", String.class).build());
 		
 		accountClassBuilder.addAttributeInfo(
 		        AttributeInfoBuilder.build(USER_ATTR_ACTIVE, String.class));
@@ -160,8 +196,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	private ObjectClassInfoBuilder prepareRoleClass(){
 		ObjectClassInfoBuilder accountClassBuilder = new ObjectClassInfoBuilder();
 		accountClassBuilder.setType(ROLE_OBJECT_CLASS);
-		accountClassBuilder.addAttributeInfo(prepareUidAttributeBuilder("id", String.class).build());
-		accountClassBuilder.addAttributeInfo(prepareNameAttributeBuilder("name", String.class).build());
+		//accountClassBuilder.addAttributeInfo(prepareUidAttributeBuilder("id", String.class).build());
+		//accountClassBuilder.addAttributeInfo(prepareNameAttributeBuilder("name", String.class).build());
 		
 		accountClassBuilder.addAttributeInfo(
 		        AttributeInfoBuilder.build("omnipotent", String.class));
@@ -219,17 +255,22 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         	findAccountByLogin(query.getByLogin(), handler, options);
         } else {
             // find required page
-            String pageing = processPageOptions(options);
-            if (!StringUtil.isEmpty(pageing)) {
-            	findPagedAccounts(pageing, handler, options);
+            String offset = fetchOffset(options);
+            String limit = fetchLimit(options);
+            if (!StringUtil.isEmpty(offset) || !StringUtil.isEmpty(limit)) {
+            	findPagedAccounts(offset, limit, handler, options);
             }
             // find all
             else {
                 int pageSize = getConfiguration().getDefaultPageSize();
+                if(pageSize > PAGE_SIZE_LIMIT){//hard interface page size limit
+                	pageSize = PAGE_SIZE_LIMIT;
+                }
                 int page = 0;
                 while (true) {
-                    pageing = processPaging(page, pageSize);
-                    boolean finish = findPagedAccounts(pageing, handler, options);
+                	offset = page*pageSize + "";
+                    limit = pageSize + "";
+                    boolean finish = findPagedAccounts(offset, limit, handler, options);
                     if (finish) {
                         break;
                     }
@@ -239,68 +280,59 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         }
 	}
 
-	private String processPaging(int page, int pageSize) {
-		// TODO Auto-generated method stub
-		return null;
+	private String fetchLimit(OperationOptions options) {
+		if(options == null || options.getPageSize() == null){
+			return null;
+		}
+		int pageSize = options.getPageSize();
+		if(pageSize > PAGE_SIZE_LIMIT){//hard interface page size limit
+        	pageSize = PAGE_SIZE_LIMIT;
+        }
+		return pageSize + "";
 	}
 
 
 
-	private boolean findPagedAccounts(String pageing, ResultsHandler handler, OperationOptions options) throws UnsupportedOperationException, JAXBException, IOException {
-		// TODO paging
-		URIBuilder uriBuilder = getURIBuilder();
-		String basePath = uriBuilder.getPath();
-		uriBuilder.setPath(basePath + USER_SEARCH);
-		
-		//TODO start of test hack
-		uriBuilder.addParameter(LOGIN_PARAM, getConfiguration().getTestUser());
-		//TODO end of test hack
-		
-		URI uri;
-		try {
-			uri = uriBuilder.build();
-		} catch (URISyntaxException e) {
-			throw new IllegalArgumentException(e.getMessage(), e);
+	private String fetchOffset(OperationOptions options) {
+		if(options == null || options.getPagedResultsOffset() == null){
+			return null;
 		}
-		HttpGet request = new HttpGet(uri);
-		request.addHeader(ACCEPT, APPLICATION_XML);
-		request.addHeader(getConfiguration().getTokenName(), getConfiguration().getTokenValue());
+		return options.getPagedResultsOffset() + "";
+	}
+
+
+
+	private boolean findPagedAccounts(String offset, String limit, ResultsHandler handler, OperationOptions options) throws UnsupportedOperationException, JAXBException, IOException {
+		// TODO paging
+		URIBuilder uriBuilder = prepareUserUriBuilder();
+		uriBuilder.addParameter(LIMIT_PARAM, limit);
+		uriBuilder.addParameter(OFFSET_PARAM, offset);
+		HttpUriRequest request = prepareRequest(uriBuilder, HttpGet.class);
 		
+		LOG.info("find paged users offset {0} limit {1} request {2}", offset, limit, request.getURI());
 		HttpResponse response = execute(request);
 		
 		CoupaUserList userList = parseUserResponse(response);
+		if(userList == null || userList.getUsers() == null || userList.getUsers().isEmpty()){
+			return true;
+		}
 		//TODO kontrolovat zda existuje
 		for(CoupaUser coupaUser : userList.getUsers()){
 			ConnectorObject connectorObject = convertUserToConnectorObject(coupaUser);
 	        handler.handle(connectorObject);
 		}
-		return true;
-	}
-
-
-
-	private String processPageOptions(OperationOptions options) {
-		// TODO Auto-generated method stub
-		return null;
+		dispose();
+		init(getConfiguration());
+		return false;
 	}
 
 
 
 	private void findAccountById(String byId, ResultsHandler handler, OperationOptions options) throws IOException, UnsupportedOperationException, JAXBException {
 		//HttpGet request = new HttpGet(getConfiguration().getServiceAddress() + USER + "/" + query.byUid);
-		URIBuilder uriBuilder = getURIBuilder();
-		String basePath = uriBuilder.getPath();
-		uriBuilder.setPath(basePath + USER_SEARCH);
+		URIBuilder uriBuilder = prepareUserUriBuilder();
 		uriBuilder.addParameter(ID_PARAM, byId);
-		URI uri;
-		try {
-			uri = uriBuilder.build();
-		} catch (URISyntaxException e) {
-			throw new IllegalArgumentException(e.getMessage(), e);
-		}
-		HttpGet request = new HttpGet(uri);
-		request.addHeader(ACCEPT, APPLICATION_XML);
-		request.addHeader(getConfiguration().getTokenName(), getConfiguration().getTokenValue());
+		HttpUriRequest request = prepareRequest(uriBuilder, HttpGet.class);
 		
 		HttpResponse response = execute(request);
 		
@@ -310,12 +342,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         handler.handle(connectorObject);
 	}
 	
-	//TODO refaktorovat duplicitni kod
 	private void findAccountByLogin(String byLogin, ResultsHandler handler, OperationOptions options) throws IOException, UnsupportedOperationException, JAXBException {
-		//HttpGet request = new HttpGet(getConfiguration().getServiceAddress() + USER + "/" + query.byUid);
-		URIBuilder uriBuilder = getURIBuilder();
-		String basePath = uriBuilder.getPath();
-		uriBuilder.setPath(basePath + USER_SEARCH);
+		URIBuilder uriBuilder = prepareUserUriBuilder();
 		uriBuilder.addParameter(LOGIN_PARAM, byLogin);
 		URI uri;
 		try {
@@ -353,9 +381,9 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         if (user.getLogin() != null) {
             builder.setName(user.getLogin());
         }
-        if(user.getActive() != null){
-        	addAttr(builder, USER_ATTR_ID, user.getId());
-        }
+//        if(user.getActive() != null){
+//        	addAttr(builder, USER_ATTR_ID, user.getId());
+//        }
 //        if(user.getActive() != null){
 //        	addAttr(builder, USER_ATTR_LOGIN, user.getLogin());
 //        }
@@ -404,13 +432,105 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
                 user.getId(), connectorObject);
         return connectorObject;
     }
+
+
+
+	@Override
+	public Uid update(ObjectClass arg0, Uid arg1, Set<Attribute> arg2, OperationOptions arg3) {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+
+
+	@Override
+	public Uid create(ObjectClass objectClass, Set<Attribute> attributes, OperationOptions arg2) {
+		if (objectClass.is(USER_OBJECT_CLASS)) {    // __ACCOUNT__
+			return createUser(null, attributes);
+        }else{
+        	return null;
+        }
+	}
+
+
+
+	private Uid createUser(Uid uid, Set<Attribute> attributes) {
+		LOG.ok("createUser, attributes: {1}", attributes);
+        if (attributes == null || attributes.isEmpty()) {
+            LOG.ok("request ignored, empty attributes");
+            return null;
+        }
+        CoupaUser newUser = prepareUserFromAttributes(attributes);
+        String userXml;
+		try {
+			userXml = convertUserToXml(newUser);
+		} catch (JAXBException e2) {
+			e2.printStackTrace();
+			throw new RuntimeException(e2);
+		}
+        URIBuilder uriBuilder = prepareUserUriBuilder();
+        uriBuilder.addParameter("Content-Type", "application/xml");
+        HttpPost request = (HttpPost)prepareRequest(uriBuilder, HttpPost.class);
+        HttpEntity entity;
+		try {
+			entity = new ByteArrayEntity(userXml.getBytes("UTF-8"));
+		} catch (UnsupportedEncodingException e1) {
+			e1.printStackTrace();
+			throw new RuntimeException(e1);
+		}
+        request.setEntity(entity);
+        
+        HttpResponse response = execute(request);
+		
+		CoupaUserList userList;
+		try {
+			userList = parseUserResponse(response);
+		} catch (UnsupportedOperationException | IOException | JAXBException e) {
+			e.printStackTrace();
+			throw new RuntimeException(e);
+		}
+		//TODO kontrolovat zda existuje
+        String id = userList.getUsers().get(0).getId();
+        Uid resultUid = new Uid(id);
+        return resultUid;
+	}
+
+
+
+	private CoupaUser prepareUserFromAttributes(Set<Attribute> attributes) {
+		CoupaUser prepredUser = new CoupaUser();
+		String uidAttr = getStringAttr(attributes, Uid.NAME);
+		prepredUser.setId(uidAttr);
+		String nameAttr = getStringAttr(attributes, Name.NAME);
+		prepredUser.setLogin(nameAttr);
+		
+		String activeAttr = getStringAttr(attributes, USER_ATTR_ACTIVE);
+		prepredUser.setActive(activeAttr);
+		String purchUserAttr = getStringAttr(attributes, USER_ATTR_PURCHASING_USER);
+		prepredUser.setPurchasingUser(purchUserAttr);
+		String authMethodAttr = getStringAttr(attributes, USER_ATTR_AUTHENTICATION_METHOD);
+		prepredUser.setAuthenticationMethod(authMethodAttr);
+		String ssoIdentAttr = getStringAttr(attributes, USER_ATTR_SSO_IDENTIFIER);
+		prepredUser.setSsoIdentifier(ssoIdentAttr);
+		String emailAttr = getStringAttr(attributes, USER_ATTR_EMAIL);
+		prepredUser.setEmail(emailAttr);
+		String firstnameAttr = getStringAttr(attributes, USER_ATTR_FIRSTNAME);
+		prepredUser.setFirstname(firstnameAttr);
+		String lastnameAttr = getStringAttr(attributes, USER_ATTR_LASTNAME);
+		prepredUser.setActive(lastnameAttr);
+		String defLocaleAttr = getStringAttr(attributes, USER_ATTR_DEFAULT_LOCALE);
+		prepredUser.setActive(defLocaleAttr);
+		return prepredUser;
+	}
 	
-//	private void getIfExists(CoupaUser object, String attrName, ConnectorObjectBuilder builder) {
-//        if (object.has(attrName)) {
-//            if (object.get(attrName) != null && !JSONObject.NULL.equals(object.get(attrName))) {
-//                addAttr(builder, attrName, object.getString(attrName));
-//            }
-//        }
-//    }
+	private String convertUserToXml(CoupaUser user) throws JAXBException{
+		JAXBContext jaxbContext = JAXBContext.newInstance(CoupaUser.class);
+		Marshaller jaxbMarshaller = jaxbContext.createMarshaller();
+		jaxbMarshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+		StringWriter sw = new StringWriter();
+		jaxbMarshaller.marshal(user, sw);
+		String result = sw.toString();
+		return result;
+	}
 
 }
