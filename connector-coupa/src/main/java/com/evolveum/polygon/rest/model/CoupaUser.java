@@ -20,7 +20,7 @@ public class CoupaUser {
 	private String lastname;
 	private List<CoupaRole> roles;
 	private String defLocale;//default-locale;
-	private String defAddressLocationCode;//default-address_location-code;
+	private CoupaDefaultAddress defAddress;//default-address_location-code;
 	
 	
 	public String getId() {
@@ -112,12 +112,12 @@ public class CoupaUser {
 		this.defLocale = defLocale;
 	}
 	
-	public String getDefAddressLocationCode() {
-		return defAddressLocationCode;
+	public CoupaDefaultAddress getDefAddress() {
+		return defAddress;
 	}
-	@XmlElement(name="default-address_location-code")
-	public void setDefAddressLocationCode(String defAddressLocationCode) {
-		this.defAddressLocationCode = defAddressLocationCode;
+	@XmlElement(name="default-address")
+	public void setDefAddress(CoupaDefaultAddress defAddress) {
+		this.defAddress = defAddress;
 	}
 	
 }

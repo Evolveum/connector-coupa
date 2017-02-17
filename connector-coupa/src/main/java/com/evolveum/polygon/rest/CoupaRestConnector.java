@@ -21,13 +21,12 @@ import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.ByteArrayEntity;
-import org.apache.http.util.EntityUtils;
 import org.identityconnectors.common.StringUtil;
 import org.identityconnectors.common.logging.Log;
 import org.identityconnectors.framework.common.objects.Attribute;
@@ -51,12 +50,13 @@ import org.identityconnectors.framework.spi.operations.TestOp;
 import org.identityconnectors.framework.spi.operations.UpdateOp;
 import org.xml.sax.InputSource;
 
+import com.evolveum.polygon.rest.model.CoupaDefaultAddress;
 import com.evolveum.polygon.rest.model.CoupaUser;
 import com.evolveum.polygon.rest.model.CoupaUserList;
 
 
 @ConnectorClass(displayNameKey = "connector.example.rest.display", configurationClass = CoupaRestConfiguration.class)
-public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter>, UpdateOp, CreateOp {
+public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter>, CreateOp, UpdateOp {
 
 	private static final Log LOG = Log.getLog(CoupaRestConnector.class);
 	
@@ -312,7 +312,7 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		LOG.info("find paged users offset {0} limit {1} request {2}", offset, limit, request.getURI());
 		HttpResponse response = execute(request);
 		
-		CoupaUserList userList = parseUserResponse(response);
+		CoupaUserList userList = parseUsersResponse(response);
 		if(userList == null || userList.getUsers() == null || userList.getUsers().isEmpty()){
 			return true;
 		}
@@ -336,7 +336,7 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		
 		HttpResponse response = execute(request);
 		
-		CoupaUserList userList = parseUserResponse(response);
+		CoupaUserList userList = parseUsersResponse(response);
 		//TODO kontrolovat zda existuje
         ConnectorObject connectorObject = convertUserToConnectorObject(userList.getUsers().get(0));
         handler.handle(connectorObject);
@@ -357,13 +357,25 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		
 		HttpResponse response = execute(request);
 		
-		CoupaUserList userList = parseUserResponse(response);
+		CoupaUserList userList = parseUsersResponse(response);
 		//TODO kontrolovat zda existuje
         ConnectorObject connectorObject = convertUserToConnectorObject(userList.getUsers().get(0));
         handler.handle(connectorObject);
 	}
 	
-	CoupaUserList parseUserResponse(HttpResponse response) throws JAXBException, UnsupportedOperationException, IOException{
+	//TODO error message handling
+	CoupaUser parseUserResponse(HttpResponse response) throws JAXBException, UnsupportedOperationException, IOException{
+		CoupaUser result = null;
+		if(response != null && response.getEntity() != null && response.getEntity().getContent() != null){
+			String responseContent = IOUtils.toString(response.getEntity().getContent(), "UTF-8");
+			JAXBContext jaxbContext = JAXBContext.newInstance(CoupaUser.class);  
+			Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();  
+			InputSource source = new InputSource(new StringReader(responseContent));
+			result = (CoupaUser)jaxbUnmarshaller.unmarshal(source);
+		}
+		return result;
+	}
+	CoupaUserList parseUsersResponse(HttpResponse response) throws JAXBException, UnsupportedOperationException, IOException{
 		CoupaUserList result = null;
 		if(response != null && response.getEntity() != null && response.getEntity().getContent() != null){
 			String responseContent = IOUtils.toString(response.getEntity().getContent(), "UTF-8");
@@ -393,8 +405,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         if(user.getAuthenticationMethod() != null){
         	addAttr(builder, USER_ATTR_AUTHENTICATION_METHOD, user.getAuthenticationMethod());
         }
-        if(user.getDefAddressLocationCode() != null){
-        	addAttr(builder, USER_ATTR_DEFAULT_ADDRESS_LOCATION_CODE, user.getDefAddressLocationCode());
+        if(user.getDefAddress() != null && user.getDefAddress().getLocationCode() != null){
+        	addAttr(builder, USER_ATTR_DEFAULT_ADDRESS_LOCATION_CODE, user.getDefAddress().getLocationCode());
         }
         if(user.getDefLocale() != null){
         	addAttr(builder, USER_ATTR_DEFAULT_LOCALE, user.getDefLocale());
@@ -433,16 +445,6 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         return connectorObject;
     }
 
-
-
-	@Override
-	public Uid update(ObjectClass arg0, Uid arg1, Set<Attribute> arg2, OperationOptions arg3) {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-
-
 	@Override
 	public Uid create(ObjectClass objectClass, Set<Attribute> attributes, OperationOptions arg2) {
 		if (objectClass.is(USER_OBJECT_CLASS)) {    // __ACCOUNT__
@@ -469,7 +471,6 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 			throw new RuntimeException(e2);
 		}
         URIBuilder uriBuilder = prepareUserUriBuilder();
-        uriBuilder.addParameter("Content-Type", "application/xml");
         HttpPost request = (HttpPost)prepareRequest(uriBuilder, HttpPost.class);
         HttpEntity entity;
 		try {
@@ -482,20 +483,61 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         
         HttpResponse response = execute(request);
 		
-		CoupaUserList userList;
+		CoupaUser user;
 		try {
-			userList = parseUserResponse(response);
+			user = parseUserResponse(response);
 		} catch (UnsupportedOperationException | IOException | JAXBException e) {
 			e.printStackTrace();
 			throw new RuntimeException(e);
 		}
 		//TODO kontrolovat zda existuje
-        String id = userList.getUsers().get(0).getId();
+        String id = user.getId();
         Uid resultUid = new Uid(id);
         return resultUid;
 	}
 
-
+	//TODO vyrefaktorovat duplicitni kod
+	@Override
+	public Uid update(ObjectClass objectClass, Uid uid, Set<Attribute> attributes, OperationOptions options) {
+		LOG.ok("updateUser, attributes: {1}", attributes);
+        if (attributes == null || attributes.isEmpty()) {
+            LOG.ok("request ignored, empty attributes");
+            return null;
+        }
+        CoupaUser newUser = prepareUserFromAttributes(attributes, uid);
+        String userXml;
+		try {
+			userXml = convertUserToXml(newUser);
+		} catch (JAXBException e2) {
+			e2.printStackTrace();
+			throw new RuntimeException(e2);
+		}
+        URIBuilder uriBuilder = prepareUserUriBuilder();
+        uriBuilder.setPath(uriBuilder.getPath() + "/" + newUser.getId());
+        HttpPut request = (HttpPut)prepareRequest(uriBuilder, HttpPut.class);
+        HttpEntity entity;
+		try {
+			entity = new ByteArrayEntity(userXml.getBytes("UTF-8"));
+		} catch (UnsupportedEncodingException e1) {
+			e1.printStackTrace();
+			throw new RuntimeException(e1);
+		}
+        request.setEntity(entity);
+        
+        HttpResponse response = execute(request);
+		
+		CoupaUser user;
+		try {
+			user = parseUserResponse(response);
+		} catch (UnsupportedOperationException | IOException | JAXBException e) {
+			e.printStackTrace();
+			throw new RuntimeException(e);
+		}
+		//TODO kontrolovat zda existuje
+        String id = user.getId();
+        Uid resultUid = new Uid(id);
+        return resultUid;
+	}
 
 	private CoupaUser prepareUserFromAttributes(Set<Attribute> attributes) {
 		CoupaUser prepredUser = new CoupaUser();
@@ -517,9 +559,22 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		String firstnameAttr = getStringAttr(attributes, USER_ATTR_FIRSTNAME);
 		prepredUser.setFirstname(firstnameAttr);
 		String lastnameAttr = getStringAttr(attributes, USER_ATTR_LASTNAME);
-		prepredUser.setActive(lastnameAttr);
+		prepredUser.setLastname(lastnameAttr);
 		String defLocaleAttr = getStringAttr(attributes, USER_ATTR_DEFAULT_LOCALE);
-		prepredUser.setActive(defLocaleAttr);
+		prepredUser.setDefLocale(defLocaleAttr);
+		String defAddrCodeAttr = getStringAttr(attributes, USER_ATTR_DEFAULT_ADDRESS_LOCATION_CODE);
+		if(prepredUser.getDefAddress() == null && defAddrCodeAttr != null && !defAddrCodeAttr.isEmpty()){
+			prepredUser.setDefAddress(new CoupaDefaultAddress());
+			prepredUser.getDefAddress().setLocationCode(defAddrCodeAttr);
+		}
+		return prepredUser;
+	}
+	
+	private CoupaUser prepareUserFromAttributes(Set<Attribute> attributes, Uid uid) {
+		CoupaUser prepredUser = prepareUserFromAttributes(attributes);
+		if(prepredUser.getId() == null && uid != null && uid.getUidValue() != null){
+			prepredUser.setId(uid.getUidValue());
+		}		
 		return prepredUser;
 	}
 	
