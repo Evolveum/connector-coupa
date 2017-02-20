@@ -54,6 +54,8 @@ import org.identityconnectors.framework.spi.operations.UpdateOp;
 import org.xml.sax.InputSource;
 
 import com.evolveum.polygon.rest.model.CoupaDefaultAddress;
+import com.evolveum.polygon.rest.model.CoupaRole;
+import com.evolveum.polygon.rest.model.CoupaRoleList;
 import com.evolveum.polygon.rest.model.CoupaUser;
 import com.evolveum.polygon.rest.model.CoupaUserList;
 
@@ -66,6 +68,7 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	public static final String APPLICATION_XML = "application/xml";
 	public static final String ACCEPT = "ACCEPT";
 	public static final String USER_SEARCH = "/users";
+	public static final String ROLE_SEARCH = "/roles";
 	public static final String LOGIN_TAG_NAME = "login";
 	
 	public static final String USER_OBJECT_CLASS = "userObjectClass";
@@ -84,9 +87,16 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	public static final String USER_ATTR_ID = "id";
 	public static final String USER_ATTR_LOGIN = "login";
 	
+	public static final String ROLE_ATTR_NAME = "name";
+	public static final String ROLE_ATTR_ID = "id";
+	public static final String ROLE_ATTR_DESCRIPTION = "description";
+	public static final String ROLE_ATTR_OMNIPOTENT = "omnipotent";
+	public static final String ROLE_ATTR_SYSTEM_ROLE = "system-role";
+	
 	public static final int PAGE_SIZE_LIMIT = 50;
 	
 	public static final String LOGIN_PARAM = "login";
+	public static final String NAME_PARAM = "name";
 	public static final String ID_PARAM = "id";
 	public static final String LIMIT_PARAM = "limit";
 	public static final String OFFSET_PARAM = "offset";
@@ -97,6 +107,13 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		URIBuilder uriBuilder = getURIBuilder();
 		String basePath = uriBuilder.getPath();
 		uriBuilder.setPath(basePath + USER_SEARCH);
+		return uriBuilder;
+	}
+	
+	private URIBuilder prepareRoleUriBuilder(){
+		URIBuilder uriBuilder = getURIBuilder();
+		String basePath = uriBuilder.getPath();
+		uriBuilder.setPath(basePath + ROLE_SEARCH);
 		return uriBuilder;
 	}
 	
@@ -249,15 +266,22 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 				throw retrEx;
 			}
         }
+        if (objectClass.is(ROLE_OBJECT_CLASS)) {
+        	try {
+				processRole(query, handler, options);
+			} catch (UnsupportedOperationException | IOException | JAXBException e) {
+				RetryableException retrEx = RetryableException.wrap("Unknown exception", e);
+				throw retrEx;
+			}
+        }
 	}
 
-	//TODO dodelat podle https://github.com/Evolveum/connector-drupal/blob/master/src/main/java/com/evolveum/polygon/connector/drupal/DrupalConnector.java
 	private void processAccount(CoupaFilter query, ResultsHandler handler, OperationOptions options) throws UnsupportedOperationException, IOException, JAXBException {
 		if (query != null && query.getById() != null) {
             findAccountById(query.getById(), handler, options);
         }
-        else if (query != null && query.getByLogin() != null) {
-        	findAccountByLogin(query.getByLogin(), handler, options);
+        else if (query != null && query.getByName() != null) {
+        	findAccountByLogin(query.getByName(), handler, options);
         } else {
             // find required page
             String offset = fetchOffset(options);
@@ -276,6 +300,39 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
                 	offset = page*pageSize + "";
                     limit = pageSize + "";
                     boolean finish = findPagedAccounts(offset, limit, handler, options);
+                    if (finish) {
+                        break;
+                    }
+                    page++;
+                }
+            }
+        }
+	}
+	
+	private void processRole(CoupaFilter query, ResultsHandler handler, OperationOptions options) throws UnsupportedOperationException, IOException, JAXBException {
+		if (query != null && query.getById() != null) {
+            findRoleById(query.getById(), handler, options);
+        }
+        else if (query != null && query.getByName() != null) {
+        	findRoleByName(query.getByName(), handler, options);
+        } else {
+            // find required page
+            String offset = fetchOffset(options);
+            String limit = fetchLimit(options);
+            if (!StringUtil.isEmpty(offset) || !StringUtil.isEmpty(limit)) {
+            	findPagedRoles(offset, limit, handler, options);
+            }
+            // find all
+            else {
+                int pageSize = getConfiguration().getDefaultPageSize();
+                if(pageSize > PAGE_SIZE_LIMIT){//hard interface page size limit
+                	pageSize = PAGE_SIZE_LIMIT;
+                }
+                int page = 0;
+                while (true) {
+                	offset = page*pageSize + "";
+                    limit = pageSize + "";
+                    boolean finish = findPagedRoles(offset, limit, handler, options);
                     if (finish) {
                         break;
                     }
@@ -306,6 +363,68 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	}
 
 
+	private boolean findPagedRoles(String offset, String limit, ResultsHandler handler, OperationOptions options) throws UnsupportedOperationException, JAXBException, IOException {
+		// TODO paging
+		URIBuilder uriBuilder = prepareRoleUriBuilder();
+		uriBuilder.addParameter(LIMIT_PARAM, limit);
+		uriBuilder.addParameter(OFFSET_PARAM, offset);
+		HttpUriRequest request = prepareRequest(uriBuilder, HttpGet.class);
+		
+		LOG.info("find paged roles offset {0} limit {1} request {2}", offset, limit, request.getURI());
+		HttpResponse response = execute(request);
+		
+		CoupaRoleList roleList = parseRolesResponse(response);
+		if(roleList == null || roleList.getRoles() == null || roleList.getRoles().isEmpty()){
+			return true;
+		}
+		//TODO kontrolovat zda existuje
+		for(CoupaRole coupaRole : roleList.getRoles()){
+			ConnectorObject connectorObject = convertRoleToConnectorObject(coupaRole);
+	        handler.handle(connectorObject);
+		}
+		dispose();
+		init(getConfiguration());
+		return false;
+	}
+
+
+
+	private void findRoleById(String byId, ResultsHandler handler, OperationOptions options) throws IOException, UnsupportedOperationException, JAXBException {
+		//HttpGet request = new HttpGet(getConfiguration().getServiceAddress() + USER + "/" + query.byUid);
+		URIBuilder uriBuilder = prepareRoleUriBuilder();
+		uriBuilder.addParameter(ID_PARAM, byId);
+		HttpUriRequest request = prepareRequest(uriBuilder, HttpGet.class);
+		
+		HttpResponse response = execute(request);
+		
+		CoupaRoleList roleList = parseRolesResponse(response);
+		//TODO kontrolovat zda existuje
+        ConnectorObject connectorObject = convertRoleToConnectorObject(roleList.getRoles().get(0));
+        handler.handle(connectorObject);
+	}
+	
+	private void findRoleByName(String byName, ResultsHandler handler, OperationOptions options) throws IOException, UnsupportedOperationException, JAXBException {
+		URIBuilder uriBuilder = prepareRoleUriBuilder();
+		uriBuilder.addParameter(NAME_PARAM, byName);
+		URI uri;
+		try {
+			uri = uriBuilder.build();
+		} catch (URISyntaxException e) {
+			throw new IllegalArgumentException(e.getMessage(), e);
+		}
+		HttpGet request = new HttpGet(uri);
+		request.addHeader(ACCEPT, APPLICATION_XML);
+		request.addHeader(getConfiguration().getTokenName(), getConfiguration().getTokenValue());
+		
+		HttpResponse response = execute(request);
+		
+		CoupaRoleList roleList = parseRolesResponse(response);
+		//TODO kontrolovat zda existuje
+        ConnectorObject connectorObject = convertRoleToConnectorObject(roleList.getRoles().get(0));
+        handler.handle(connectorObject);
+	}
+	
+	
 
 	private boolean findPagedAccounts(String offset, String limit, ResultsHandler handler, OperationOptions options) throws UnsupportedOperationException, JAXBException, IOException {
 		// TODO paging
@@ -368,7 +487,7 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         handler.handle(connectorObject);
 	}
 	
-	//TODO error message handling
+
 	CoupaUser parseUserResponse(HttpResponse response) throws UnsupportedOperationException, IOException, JAXBException{
 		CoupaUser result = null;
 		if(response != null && response.getEntity() != null && response.getEntity().getContent() != null){
@@ -399,6 +518,39 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		}
 		return result;
 	}
+	
+	
+	CoupaRole parseRoleResponse(HttpResponse response) throws UnsupportedOperationException, IOException, JAXBException{
+		CoupaRole result = null;
+		if(response != null && response.getEntity() != null && response.getEntity().getContent() != null){
+			String responseContent = IOUtils.toString(response.getEntity().getContent(), "UTF-8");
+			JAXBContext jaxbContext = JAXBContext.newInstance(CoupaRole.class);  
+			Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();  
+			InputSource source = new InputSource(new StringReader(responseContent));
+			try {
+				result = (CoupaRole)jaxbUnmarshaller.unmarshal(source);
+			} catch (JAXBException e) {
+				handleCoupaError(responseContent, response);
+			}
+		}
+		return result;
+	}
+	CoupaRoleList parseRolesResponse(HttpResponse response) throws JAXBException, UnsupportedOperationException, IOException{
+		CoupaRoleList result = null;
+		if(response != null && response.getEntity() != null && response.getEntity().getContent() != null){
+			String responseContent = IOUtils.toString(response.getEntity().getContent(), "UTF-8");
+			JAXBContext jaxbContext = JAXBContext.newInstance(CoupaRoleList.class);  
+			Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();  
+			InputSource source = new InputSource(new StringReader(responseContent));
+			try {
+				result = (CoupaRoleList)jaxbUnmarshaller.unmarshal(source);
+			} catch (JAXBException e) {
+				handleCoupaError(responseContent, response);
+			}
+		}
+		return result;
+	}
+	
 	
 	private void handleCoupaError(String responseContent, HttpResponse response) {
 		//TODO not found (zatim neni potreba v coupe asi ani nejde mazat uzivatel)
@@ -464,6 +616,29 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         ConnectorObject connectorObject = builder.build();
         LOG.ok("convertUserToConnectorObject, user: {0}, \n\tconnectorObject: {1}",
                 user.getId(), connectorObject);
+        return connectorObject;
+    }
+	
+	private ConnectorObject convertRoleToConnectorObject(CoupaRole role) throws IOException {
+        ConnectorObjectBuilder builder = new ConnectorObjectBuilder();
+        builder.setUid(new Uid(role.getId()));
+        if (role.getName() != null) {
+            builder.setName(role.getName());
+        }
+        
+        if(role.getDescription() != null){
+        	addAttr(builder, ROLE_ATTR_DESCRIPTION, role.getDescription());
+        }
+        if(role.getOmnipotent() != null){
+        	addAttr(builder, ROLE_ATTR_OMNIPOTENT, role.getOmnipotent());
+        }
+        if(role.getSystemRole() != null){
+        	addAttr(builder, ROLE_ATTR_SYSTEM_ROLE, role.getSystemRole());
+        }
+
+        ConnectorObject connectorObject = builder.build();
+        LOG.ok("convertRoleToConnectorObject, role: {0}, \n\tconnectorObject: {1}",
+                role.getId(), connectorObject);
         return connectorObject;
     }
 

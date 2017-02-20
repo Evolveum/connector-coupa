@@ -2,23 +2,23 @@ package com.evolveum.polygon.rest;
 
 public class CoupaFilter {
 	
-	private String byLogin;
+	private String byName;
 	private String byId;
 	
 	@Override
     public String toString() {
         return "DrupalFilter{" +
-                "byLogin='" + byLogin + '\'' +
+                "byLogin='" + byName + '\'' +
                 ", byId=" + byId +
                 '}';
     }
 
-	public String getByLogin() {
-		return byLogin;
+	public String getByName() {
+		return byName;
 	}
 
-	public void setByLogin(String byLogin) {
-		this.byLogin = byLogin;
+	public void setByName(String byName) {
+		this.byName = byName;
 	}
 
 	public String getById() {

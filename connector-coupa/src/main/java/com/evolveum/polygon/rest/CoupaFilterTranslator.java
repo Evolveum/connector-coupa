@@ -32,7 +32,7 @@ public class CoupaFilterTranslator extends AbstractFilterTranslator<CoupaFilter>
         else if (Name.NAME.equals(attr.getName())) {
             if (attr.getValue() != null && attr.getValue().get(0) != null) {
             	CoupaFilter lf = new CoupaFilter();
-                lf.setByLogin(String.valueOf(attr.getValue().get(0)));
+                lf.setByName(String.valueOf(attr.getValue().get(0)));
                 return lf;
             }
         }
