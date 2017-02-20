@@ -29,6 +29,9 @@ import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.ByteArrayEntity;
 import org.identityconnectors.common.StringUtil;
 import org.identityconnectors.common.logging.Log;
+import org.identityconnectors.framework.common.exceptions.AlreadyExistsException;
+import org.identityconnectors.framework.common.exceptions.InvalidAttributeValueException;
+import org.identityconnectors.framework.common.exceptions.RetryableException;
 import org.identityconnectors.framework.common.objects.Attribute;
 import org.identityconnectors.framework.common.objects.AttributeInfoBuilder;
 import org.identityconnectors.framework.common.objects.ConnectorObject;
@@ -87,6 +90,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	public static final String ID_PARAM = "id";
 	public static final String LIMIT_PARAM = "limit";
 	public static final String OFFSET_PARAM = "offset";
+	
+	public static final String ERROR_PART_DUPLICATE_LOGIN = "Login has already been taken";
 	
 	private URIBuilder prepareUserUriBuilder(){
 		URIBuilder uriBuilder = getURIBuilder();
@@ -240,8 +245,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         	try {
 				processAccount(query, handler, options);
 			} catch (UnsupportedOperationException | IOException | JAXBException e) {
-				// TODO Auto-generated catch block
-				throw new RuntimeException(e);
+				RetryableException retrEx = RetryableException.wrap("Unknown exception", e);
+				throw retrEx;
 			}
         }
 	}
@@ -364,14 +369,18 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	}
 	
 	//TODO error message handling
-	CoupaUser parseUserResponse(HttpResponse response) throws JAXBException, UnsupportedOperationException, IOException{
+	CoupaUser parseUserResponse(HttpResponse response) throws UnsupportedOperationException, IOException, JAXBException{
 		CoupaUser result = null;
 		if(response != null && response.getEntity() != null && response.getEntity().getContent() != null){
 			String responseContent = IOUtils.toString(response.getEntity().getContent(), "UTF-8");
 			JAXBContext jaxbContext = JAXBContext.newInstance(CoupaUser.class);  
 			Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();  
 			InputSource source = new InputSource(new StringReader(responseContent));
-			result = (CoupaUser)jaxbUnmarshaller.unmarshal(source);
+			try {
+				result = (CoupaUser)jaxbUnmarshaller.unmarshal(source);
+			} catch (JAXBException e) {
+				handleCoupaError(responseContent, response);
+			}
 		}
 		return result;
 	}
@@ -382,9 +391,22 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 			JAXBContext jaxbContext = JAXBContext.newInstance(CoupaUserList.class);  
 			Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();  
 			InputSource source = new InputSource(new StringReader(responseContent));
-			result = (CoupaUserList)jaxbUnmarshaller.unmarshal(source);
+			try {
+				result = (CoupaUserList)jaxbUnmarshaller.unmarshal(source);
+			} catch (JAXBException e) {
+				handleCoupaError(responseContent, response);
+			}
 		}
 		return result;
+	}
+	
+	private void handleCoupaError(String responseContent, HttpResponse response) {
+		//TODO not found (zatim neni potreba v coupe asi ani nejde mazat uzivatel)
+		String resultMessage = response.getStatusLine().toString() + "\n" + responseContent;
+		if(responseContent != null && responseContent.contains(ERROR_PART_DUPLICATE_LOGIN)){
+			throw new AlreadyExistsException(resultMessage);
+		}
+		throw new InvalidAttributeValueException(resultMessage);
 	}
 	
 	private ConnectorObject convertUserToConnectorObject(CoupaUser user) throws IOException {
@@ -487,8 +509,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		try {
 			user = parseUserResponse(response);
 		} catch (UnsupportedOperationException | IOException | JAXBException e) {
-			e.printStackTrace();
-			throw new RuntimeException(e);
+			RetryableException retrEx = RetryableException.wrap("Unknown exception", e);
+			throw retrEx;
 		}
 		//TODO kontrolovat zda existuje
         String id = user.getId();
@@ -530,8 +552,8 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		try {
 			user = parseUserResponse(response);
 		} catch (UnsupportedOperationException | IOException | JAXBException e) {
-			e.printStackTrace();
-			throw new RuntimeException(e);
+			RetryableException retrEx = RetryableException.wrap("Unknown exception", e);
+			throw retrEx;
 		}
 		//TODO kontrolovat zda existuje
         String id = user.getId();
