@@ -7,6 +7,8 @@ import java.io.UnsupportedEncodingException;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 import javax.xml.bind.JAXBContext;
@@ -59,7 +61,7 @@ import com.evolveum.polygon.rest.model.CoupaRoleList;
 import com.evolveum.polygon.rest.model.CoupaUser;
 import com.evolveum.polygon.rest.model.CoupaUserList;
 
-
+//TODO init dat na konexi keepAlive aby se nemusela furt resetovat
 @ConnectorClass(displayNameKey = "connector.example.rest.display", configurationClass = CoupaRestConfiguration.class)
 public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter>, CreateOp, UpdateOp {
 
@@ -205,11 +207,14 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		accountClassBuilder.addAttributeInfo(
 		        AttributeInfoBuilder.build(USER_ATTR_LASTNAME, String.class));
 		accountClassBuilder.addAttributeInfo(
-		        AttributeInfoBuilder.build(USER_ATTR_ROLES, String.class));
-		accountClassBuilder.addAttributeInfo(
 		        AttributeInfoBuilder.build(USER_ATTR_DEFAULT_LOCALE, String.class));
 		accountClassBuilder.addAttributeInfo(
 		        AttributeInfoBuilder.build(USER_ATTR_DEFAULT_ADDRESS_LOCATION_CODE, String.class));
+		
+		AttributeInfoBuilder attrRolesBuilder = new AttributeInfoBuilder(USER_ATTR_ROLES, String.class);
+		attrRolesBuilder.setMultiValued(true);
+        attrRolesBuilder.setReturnedByDefault(false);
+        accountClassBuilder.addAttributeInfo(attrRolesBuilder.build());
 		
 		return accountClassBuilder;
 	}
@@ -601,17 +606,15 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         		addAttr(builder, USER_ATTR_SSO_IDENTIFIER, user.getSsoIdentifier());
         }
 
-
         //TODO status
 //        if (user.has(ATTR_STATUS)) {
 //            boolean enable = STATUS_ENABLED.equals(user.getString(ATTR_STATUS)) ? true : false;
 //            addAttr(builder, OperationalAttributes.ENABLE_NAME, enable);
 //        }
 
-        //TODO role
-//        if (user.getRoles() != null && !user.getRoles().isEmpty()) {
-//            builder.addAttribute(USER_ATTR_ROLES, user.getRoles());
-//        }
+        if (user.getRoles() != null && !user.getRoles().isEmpty()) {
+            builder.addAttribute(USER_ATTR_ROLES, user.getRolesArray());
+        }
 
         ConnectorObject connectorObject = builder.build();
         LOG.ok("convertUserToConnectorObject, user: {0}, \n\tconnectorObject: {1}",
@@ -696,11 +699,14 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	//TODO vyrefaktorovat duplicitni kod
 	@Override
 	public Uid update(ObjectClass objectClass, Uid uid, Set<Attribute> attributes, OperationOptions options) {
+		//TODO jine object class
 		LOG.ok("updateUser, attributes: {1}", attributes);
         if (attributes == null || attributes.isEmpty()) {
             LOG.ok("request ignored, empty attributes");
             return null;
         }
+        //TODO zkontrolovat ze ma dojit k premazani roli
+        deleteAllRolesFromUser(uid);
         CoupaUser newUser = prepareUserFromAttributes(attributes, uid);
         String userXml;
 		try {
@@ -736,35 +742,87 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
         return resultUid;
 	}
 
+	private void deleteAllRolesFromUser(Uid uid) {
+		CoupaUser newUser = prepareUserForRoleDelete(uid);
+        String userXml;
+		try {
+			userXml = convertUserToXml(newUser);
+		} catch (JAXBException e2) {
+			e2.printStackTrace();
+			throw new RuntimeException(e2);
+		}
+        URIBuilder uriBuilder = prepareUserUriBuilder();
+        uriBuilder.setPath(uriBuilder.getPath() + "/" + newUser.getId());
+        HttpPut request = (HttpPut)prepareRequest(uriBuilder, HttpPut.class);
+        HttpEntity entity;
+		try {
+			entity = new ByteArrayEntity(userXml.getBytes("UTF-8"));
+		} catch (UnsupportedEncodingException e1) {
+			e1.printStackTrace();
+			throw new RuntimeException(e1);
+		}
+        request.setEntity(entity);
+        
+        HttpResponse response = execute(request);
+		
+		CoupaUser user;
+		try {
+			user = parseUserResponse(response);
+		} catch (UnsupportedOperationException | IOException | JAXBException e) {
+			RetryableException retrEx = RetryableException.wrap("Unknown exception", e);
+			throw retrEx;
+		}
+		dispose();
+		init(getConfiguration());
+	}
+
+	private CoupaUser prepareUserForRoleDelete(Uid uid) {
+		CoupaUser preparedUser = new CoupaUser();
+		preparedUser.setId(uid.getUidValue());
+		preparedUser.setRoles(new ArrayList<CoupaRole>());
+		return preparedUser;
+	}
+
 	private CoupaUser prepareUserFromAttributes(Set<Attribute> attributes) {
-		CoupaUser prepredUser = new CoupaUser();
+		CoupaUser preparedUser = new CoupaUser();
 		String uidAttr = getStringAttr(attributes, Uid.NAME);
-		prepredUser.setId(uidAttr);
+		preparedUser.setId(uidAttr);
 		String nameAttr = getStringAttr(attributes, Name.NAME);
-		prepredUser.setLogin(nameAttr);
+		preparedUser.setLogin(nameAttr);
 		
 		String activeAttr = getStringAttr(attributes, USER_ATTR_ACTIVE);
-		prepredUser.setActive(activeAttr);
+		preparedUser.setActive(activeAttr);
 		String purchUserAttr = getStringAttr(attributes, USER_ATTR_PURCHASING_USER);
-		prepredUser.setPurchasingUser(purchUserAttr);
+		preparedUser.setPurchasingUser(purchUserAttr);
 		String authMethodAttr = getStringAttr(attributes, USER_ATTR_AUTHENTICATION_METHOD);
-		prepredUser.setAuthenticationMethod(authMethodAttr);
+		preparedUser.setAuthenticationMethod(authMethodAttr);
 		String ssoIdentAttr = getStringAttr(attributes, USER_ATTR_SSO_IDENTIFIER);
-		prepredUser.setSsoIdentifier(ssoIdentAttr);
+		preparedUser.setSsoIdentifier(ssoIdentAttr);
 		String emailAttr = getStringAttr(attributes, USER_ATTR_EMAIL);
-		prepredUser.setEmail(emailAttr);
+		preparedUser.setEmail(emailAttr);
 		String firstnameAttr = getStringAttr(attributes, USER_ATTR_FIRSTNAME);
-		prepredUser.setFirstname(firstnameAttr);
+		preparedUser.setFirstname(firstnameAttr);
 		String lastnameAttr = getStringAttr(attributes, USER_ATTR_LASTNAME);
-		prepredUser.setLastname(lastnameAttr);
+		preparedUser.setLastname(lastnameAttr);
 		String defLocaleAttr = getStringAttr(attributes, USER_ATTR_DEFAULT_LOCALE);
-		prepredUser.setDefLocale(defLocaleAttr);
+		preparedUser.setDefLocale(defLocaleAttr);
 		String defAddrCodeAttr = getStringAttr(attributes, USER_ATTR_DEFAULT_ADDRESS_LOCATION_CODE);
-		if(prepredUser.getDefAddress() == null && defAddrCodeAttr != null && !defAddrCodeAttr.isEmpty()){
-			prepredUser.setDefAddress(new CoupaDefaultAddress());
-			prepredUser.getDefAddress().setLocationCode(defAddrCodeAttr);
+		if(preparedUser.getDefAddress() == null && defAddrCodeAttr != null && !defAddrCodeAttr.isEmpty()){
+			preparedUser.setDefAddress(new CoupaDefaultAddress());
+			preparedUser.getDefAddress().setLocationCode(defAddrCodeAttr);
 		}
-		return prepredUser;
+		
+		String[] rolesAttr = getMultiValAttr(attributes, USER_ATTR_ROLES, null);
+		if(rolesAttr != null){
+			List<CoupaRole> rolesList = new ArrayList<CoupaRole>();
+			for(String roleName : rolesAttr){
+				CoupaRole constructedRole = new CoupaRole();
+				constructedRole.setName(roleName);
+				rolesList.add(constructedRole);
+			}
+			preparedUser.setRoles(rolesList);
+		}
+		return preparedUser;
 	}
 	
 	private CoupaUser prepareUserFromAttributes(Set<Attribute> attributes, Uid uid) {

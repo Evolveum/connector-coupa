@@ -98,7 +98,7 @@ public class CoupaUser {
 	public List<CoupaRole> getRoles() {
 		return roles;
 	}
-	@XmlElementWrapper
+	@XmlElementWrapper(name = "roles")
 	@XmlElement(name = "role")  
 	public void setRoles(List<CoupaRole> roles) {
 		this.roles = roles;
@@ -118,6 +118,19 @@ public class CoupaUser {
 	@XmlElement(name="default-address")
 	public void setDefAddress(CoupaDefaultAddress defAddress) {
 		this.defAddress = defAddress;
+	}
+	
+	public String[] getRolesArray(){
+		if(roles == null || roles.isEmpty()){
+			return null;
+		}
+		String[] result = new String[roles.size()];
+		int i = 0;
+		for(CoupaRole role : roles){
+			result[i] = role.getShadowArrayValue(); 
+			i++;
+		}
+		return result;
 	}
 	
 }

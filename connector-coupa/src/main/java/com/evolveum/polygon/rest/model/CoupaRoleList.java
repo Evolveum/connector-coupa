@@ -13,7 +13,7 @@ public class CoupaRoleList {
 	public List<CoupaRole> getRoles() {
 		return roles;
 	}
-	@XmlElement(name = "roles")  
+	@XmlElement(name = "role")  
 	public void setRoles(List<CoupaRole> roles) {
 		this.roles = roles;
 	}
