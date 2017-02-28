@@ -104,6 +104,7 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	public static final String OFFSET_PARAM = "offset";
 	
 	public static final String ERROR_PART_DUPLICATE_LOGIN = "Login has already been taken";
+	public static final String ERROR_PART_DUPLICATE_EMAIL = "Email has already been taken";
 	
 	private URIBuilder prepareUserUriBuilder(){
 		URIBuilder uriBuilder = getURIBuilder();
@@ -560,7 +561,7 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	private void handleCoupaError(String responseContent, HttpResponse response) {
 		//TODO not found (zatim neni potreba v coupe asi ani nejde mazat uzivatel)
 		String resultMessage = response.getStatusLine().toString() + "\n" + responseContent;
-		if(responseContent != null && responseContent.contains(ERROR_PART_DUPLICATE_LOGIN)){
+		if(responseContent != null && (responseContent.contains(ERROR_PART_DUPLICATE_LOGIN) || responseContent.contains(ERROR_PART_DUPLICATE_EMAIL))){
 			throw new AlreadyExistsException(resultMessage);
 		}
 		throw new InvalidAttributeValueException(resultMessage);
@@ -681,6 +682,9 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		}
         request.setEntity(entity);
         
+        LOG.info("sending create to Coupa Address: " + request.getRequestLine());
+        LOG.info("sending create to Coupa Content: " + request.getEntity());
+        
         HttpResponse response = execute(request);
 		
 		CoupaUser user;
@@ -700,14 +704,18 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 	@Override
 	public Uid update(ObjectClass objectClass, Uid uid, Set<Attribute> attributes, OperationOptions options) {
 		//TODO jine object class
-		LOG.ok("updateUser, attributes: {1}", attributes);
+		LOG.ok("updateUser, attributes: {0}", attributes);
         if (attributes == null || attributes.isEmpty()) {
             LOG.ok("request ignored, empty attributes");
             return null;
         }
-        //TODO zkontrolovat ze ma dojit k premazani roli
-        deleteAllRolesFromUser(uid);
         CoupaUser newUser = prepareUserFromAttributes(attributes, uid);
+        //TODO zkontrolovat ze ma dojit k premazani roli (doslo jsou jine nez jsou aktualne zapsane)
+        Boolean deleteRoleAssignments = getConfiguration().getDeleteRoleAssignments();
+        if(deleteRoleAssignments != null && deleteRoleAssignments && newUser.getRoles() != null){
+        	//mazani assignmentu je povolene a je naplneny attribut seznamu roli (naplneny muze byt i prazdnym listem)
+        	deleteAllRolesFromUser(uid);
+        }
         String userXml;
 		try {
 			userXml = convertUserToXml(newUser);
@@ -726,6 +734,9 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 			throw new RuntimeException(e1);
 		}
         request.setEntity(entity);
+        
+        LOG.info("sending update to Coupa Address: " + request.getRequestLine());
+        LOG.info("sending update to Coupa Content: " + request.getEntity());
         
         HttpResponse response = execute(request);
 		
