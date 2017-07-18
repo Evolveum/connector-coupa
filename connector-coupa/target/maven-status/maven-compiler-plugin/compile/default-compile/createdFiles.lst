@@ -1,9 +1,0 @@
-com\evolveum\polygon\rest\model\CoupaUser.class
-com\evolveum\polygon\rest\model\CoupaRole.class
-com\evolveum\polygon\rest\model\CoupaRoleList.class
-com\evolveum\polygon\rest\CoupaRestConnector.class
-com\evolveum\polygon\rest\model\CoupaUserList.class
-com\evolveum\polygon\rest\model\CoupaDefaultAddress.class
-com\evolveum\polygon\rest\CoupaFilter.class
-com\evolveum\polygon\rest\CoupaFilterTranslator.class
-com\evolveum\polygon\rest\CoupaRestConfiguration.class
