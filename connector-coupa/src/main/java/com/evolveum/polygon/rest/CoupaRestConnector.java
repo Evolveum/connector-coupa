@@ -49,6 +49,7 @@ import org.identityconnectors.framework.common.objects.Uid;
 import org.identityconnectors.framework.common.objects.filter.FilterTranslator;
 import org.identityconnectors.framework.spi.ConnectorClass;
 import org.identityconnectors.framework.spi.operations.CreateOp;
+import org.identityconnectors.framework.spi.operations.DeleteOp;
 import org.identityconnectors.framework.spi.operations.SchemaOp;
 import org.identityconnectors.framework.spi.operations.SearchOp;
 import org.identityconnectors.framework.spi.operations.TestOp;
@@ -63,7 +64,7 @@ import com.evolveum.polygon.rest.model.CoupaUserList;
 
 //TODO init dat na konexi keepAlive aby se nemusela furt resetovat
 @ConnectorClass(displayNameKey = "connector.example.rest.display", configurationClass = CoupaRestConfiguration.class)
-public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter>, CreateOp, UpdateOp {
+public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfiguration> implements TestOp, SchemaOp, SearchOp<CoupaFilter>, CreateOp, UpdateOp, DeleteOp {
 
 	private static final Log LOG = Log.getLog(CoupaRestConnector.class);
 	
@@ -852,6 +853,54 @@ public class CoupaRestConnector extends AbstractRestConnector<CoupaRestConfigura
 		jaxbMarshaller.marshal(user, sw);
 		String result = sw.toString();
 		return result;
+	}
+
+	@Override
+	public void delete(ObjectClass objectClass, Uid uid, OperationOptions arg2) {
+		if (objectClass.is(USER_OBJECT_CLASS)) {    // __ACCOUNT__
+			deleteUser(uid);
+        }
+	}
+	
+	private void deleteUser(Uid uid){
+		CoupaUser newUser = prepareUserForDelete(uid);
+        String userXml;
+		try {
+			userXml = convertUserToXml(newUser);
+		} catch (JAXBException e2) {
+			e2.printStackTrace();
+			throw new RuntimeException(e2);
+		}
+        URIBuilder uriBuilder = prepareUserUriBuilder();
+        uriBuilder.setPath(uriBuilder.getPath() + "/" + newUser.getId());
+        HttpPut request = (HttpPut)prepareRequest(uriBuilder, HttpPut.class);
+        HttpEntity entity;
+		try {
+			entity = new ByteArrayEntity(userXml.getBytes("UTF-8"));
+		} catch (UnsupportedEncodingException e1) {
+			e1.printStackTrace();
+			throw new RuntimeException(e1);
+		}
+        request.setEntity(entity);
+        
+        HttpResponse response = execute(request);
+		
+		CoupaUser user;
+		try {
+			user = parseUserResponse(response);
+		} catch (UnsupportedOperationException | IOException | JAXBException e) {
+			RetryableException retrEx = RetryableException.wrap("Unknown exception", e);
+			throw retrEx;
+		}
+		dispose();
+		init(getConfiguration());
+	}
+	
+	private CoupaUser prepareUserForDelete(Uid uid) {
+		CoupaUser preparedUser = new CoupaUser();
+		preparedUser.setId(uid.getUidValue());
+		preparedUser.setActive("false");
+		return preparedUser;
 	}
 
 }
